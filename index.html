@@ -159,16 +159,22 @@
           const data = await response.json();
           
           const decksData = [];
-          if (data) {
+          if (data && typeof data === 'object') {
             Object.keys(data).forEach(key => {
-              decksData.push({ id: key, ...data[key] });
+              const deck = data[key];
+              if (deck && deck.name && deck.maker) {
+                decksData.push({ id: key, ...deck });
+              }
             });
           }
           
-          setDecks(decksData.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
+          setDecks(decksData.sort((a, b) => {
+            const dateA = new Date(b.createdAt || 0);
+            const dateB = new Date(a.createdAt || 0);
+            return dateA - dateB;
+          }));
         } catch (error) {
           console.error('Error loading decks:', error);
-          alert('Error loading decks: ' + error.message);
         } finally {
           setLoading(false);
         }
@@ -277,6 +283,7 @@
       };
 
       const filteredDecks = decks.filter(deck => {
+        if (!deck || !deck.name || !deck.maker) return false;
         const matchesSearch = deck.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                               deck.maker.toLowerCase().includes(searchTerm.toLowerCase());
         const matchesMaker = !filterMaker || deck.maker === filterMaker;
