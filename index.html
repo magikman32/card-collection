@@ -1,0 +1,837 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Card Collection</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+      background: #f8f9fa;
+      color: #1f2937;
+    }
+    #root { min-height: 100vh; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    // Firebase imports (using CDN)
+    const firebaseConfig = {
+      apiKey: "AIzaSyDv2vrovWZkPvHovXb-CGdemtTDVckPwnY",
+      authDomain: "magikman32-playing-cards.firebaseapp.com",
+      projectId: "magikman32-playing-cards",
+      storageBucket: "magikman32-playing-cards.firebasestorage.app",
+      messagingSenderId: "639831061618",
+      appId: "1:639831061618:web:a3fcded7fffa3bc4b43eeb"
+    };
+
+    // Initialize Firebase
+    let db, storage;
+    
+    const initializeFirebase = async () => {
+      const firebaseApp = await import('https://www.gstatic.com/firebaselibs/9.23.0/firebase-app.js');
+      const firestore = await import('https://www.gstatic.com/firebaselibs/9.23.0/firebase-firestore.js');
+      const storageModule = await import('https://www.gstatic.com/firebaselibs/9.23.0/firebase-storage.js');
+      
+      const app = firebaseApp.initializeApp(firebaseConfig);
+      db = firestore.getFirestore(app);
+      storage = storageModule.getStorage(app);
+      
+      return { firebaseApp, firestore, storageModule };
+    };
+
+    function CardCollectionApp() {
+      const [decks, setDecks] = useState([]);
+      const [view, setView] = useState('gallery');
+      const [searchTerm, setSearchTerm] = useState('');
+      const [filterMaker, setFilterMaker] = useState('');
+      const [showForm, setShowForm] = useState(false);
+      const [loading, setLoading] = useState(true);
+      const [uploading, setUploading] = useState(false);
+      const [editingId, setEditingId] = useState(null);
+      const [firebaseReady, setFirebaseReady] = useState(false);
+      
+      const [formData, setFormData] = useState({
+        name: '',
+        maker: '',
+        quantity: 1,
+        price: '',
+        condition: 'Mint',
+        notes: '',
+        imageUrl: ''
+      });
+      const [imageFile, setImageFile] = useState(null);
+      const [imagePreview, setImagePreview] = useState('');
+
+      useEffect(() => {
+        const setupFirebase = async () => {
+          try {
+            await initializeFirebase();
+            setFirebaseReady(true);
+            loadDecks();
+          } catch (error) {
+            console.error('Firebase init error:', error);
+            setLoading(false);
+          }
+        };
+        setupFirebase();
+      }, []);
+
+      const loadDecks = async () => {
+        if (!db) return;
+        try {
+          setLoading(true);
+          const { getDocs, collection } = await import('https://www.gstatic.com/firebaselibs/9.23.0/firebase-firestore.js');
+          const querySnapshot = await getDocs(collection(db, 'decks'));
+          const decksData = [];
+          querySnapshot.forEach((doc) => {
+            decksData.push({ id: doc.id, ...doc.data() });
+          });
+          setDecks(decksData.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
+        } catch (error) {
+          console.error('Error loading decks:', error);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const handleImageChange = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+          setImageFile(file);
+          const reader = new FileReader();
+          reader.onload = (event) => setImagePreview(event.target.result);
+          reader.readAsDataURL(file);
+        }
+      };
+
+      const uploadImage = async (file) => {
+        const { ref, uploadBytes, getDownloadURL } = await import('https://www.gstatic.com/firebaselibs/9.23.0/firebase-storage.js');
+        const timestamp = Date.now();
+        const fileName = `decks/${timestamp}_${file.name}`;
+        const storageRef = ref(storage, fileName);
+        await uploadBytes(storageRef, file);
+        return getDownloadURL(storageRef);
+      };
+
+      const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (!formData.name || !formData.maker) {
+          alert('Please fill in deck name and maker');
+          return;
+        }
+
+        setUploading(true);
+        try {
+          const { addDoc, collection, updateDoc, doc } = await import('https://www.gstatic.com/firebaselibs/9.23.0/firebase-firestore.js');
+          
+          let imageUrl = formData.imageUrl;
+          if (imageFile) {
+            imageUrl = await uploadImage(imageFile);
+          }
+
+          const deckData = {
+            name: formData.name,
+            maker: formData.maker,
+            quantity: parseInt(formData.quantity),
+            price: parseFloat(formData.price) || 0,
+            condition: formData.condition,
+            notes: formData.notes,
+            imageUrl: imageUrl,
+            updatedAt: new Date().toISOString()
+          };
+
+          if (editingId) {
+            await updateDoc(doc(db, 'decks', editingId), deckData);
+            setEditingId(null);
+          } else {
+            deckData.createdAt = new Date().toISOString();
+            await addDoc(collection(db, 'decks'), deckData);
+          }
+
+          resetForm();
+          loadDecks();
+        } catch (error) {
+          console.error('Error saving deck:', error);
+          alert('Error saving deck: ' + error.message);
+        } finally {
+          setUploading(false);
+        }
+      };
+
+      const resetForm = () => {
+        setFormData({
+          name: '',
+          maker: '',
+          quantity: 1,
+          price: '',
+          condition: 'Mint',
+          notes: '',
+          imageUrl: ''
+        });
+        setImageFile(null);
+        setImagePreview('');
+        setShowForm(false);
+        setEditingId(null);
+      };
+
+      const handleEdit = (deck) => {
+        setFormData({
+          name: deck.name,
+          maker: deck.maker,
+          quantity: deck.quantity,
+          price: deck.price || '',
+          condition: deck.condition || 'Mint',
+          notes: deck.notes || '',
+          imageUrl: deck.imageUrl || ''
+        });
+        setImagePreview(deck.imageUrl || '');
+        setEditingId(deck.id);
+        setShowForm(true);
+      };
+
+      const handleDelete = async (id) => {
+        if (window.confirm('Are you sure you want to delete this deck?')) {
+          try {
+            const { deleteDoc, doc } = await import('https://www.gstatic.com/firebaselibs/9.23.0/firebase-firestore.js');
+            await deleteDoc(doc(db, 'decks', id));
+            loadDecks();
+          } catch (error) {
+            console.error('Error deleting deck:', error);
+            alert('Error deleting deck');
+          }
+        }
+      };
+
+      const filteredDecks = decks.filter(deck => {
+        const matchesSearch = deck.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                              deck.maker.toLowerCase().includes(searchTerm.toLowerCase());
+        const matchesMaker = !filterMaker || deck.maker === filterMaker;
+        return matchesSearch && matchesMaker;
+      });
+
+      const makers = [...new Set(decks.map(d => d.maker))].sort();
+      const totalValue = filteredDecks.reduce((sum, d) => sum + (d.price * d.quantity), 0);
+      const totalDecks = filteredDecks.reduce((sum, d) => sum + d.quantity, 0);
+
+      const exportCSV = () => {
+        const headers = ['Deck Name', 'Maker', 'Quantity', 'Price per Unit', 'Total Value', 'Condition', 'Notes'];
+        const rows = filteredDecks.map(d => [
+          d.name,
+          d.maker,
+          d.quantity,
+          d.price,
+          (d.price * d.quantity).toFixed(2),
+          d.condition,
+          d.notes
+        ]);
+
+        const csv = [headers, ...rows].map(row => 
+          row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')
+        ).join('\n');
+
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'card_collection.csv';
+        a.click();
+        window.URL.revokeObjectURL(url);
+      };
+
+      return (
+        <div style={{ padding: '2rem', maxWidth: '1400px', margin: '0 auto' }}>
+          <style>{`
+            * { box-sizing: border-box; }
+            
+            .header {
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              margin-bottom: 2rem;
+              flex-wrap: wrap;
+              gap: 1rem;
+            }
+            
+            .header h1 {
+              margin: 0;
+              font-size: 28px;
+              font-weight: 600;
+            }
+            
+            .button {
+              padding: 0.5rem 1rem;
+              border: none;
+              border-radius: 8px;
+              font-size: 14px;
+              font-weight: 500;
+              cursor: pointer;
+              transition: all 0.2s;
+            }
+            
+            .button-primary {
+              background: #0066cc;
+              color: white;
+            }
+            
+            .button-primary:hover {
+              background: #0052a3;
+            }
+            
+            .button-secondary {
+              background: #f0f0f0;
+              color: #1f2937;
+              border: 1px solid #ddd;
+            }
+            
+            .button-secondary:hover {
+              background: #e5e7eb;
+            }
+            
+            .stats-bar {
+              display: flex;
+              gap: 2rem;
+              margin-bottom: 2rem;
+              padding: 1rem;
+              background: white;
+              border-radius: 8px;
+              flex-wrap: wrap;
+              box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            }
+            
+            .stat-item {
+              display: flex;
+              flex-direction: column;
+            }
+            
+            .stat-label {
+              font-size: 12px;
+              color: #6b7280;
+              text-transform: uppercase;
+              letter-spacing: 0.5px;
+              margin-bottom: 0.25rem;
+            }
+            
+            .stat-value {
+              font-size: 24px;
+              font-weight: 600;
+            }
+            
+            .controls {
+              display: flex;
+              gap: 1rem;
+              margin-bottom: 2rem;
+              flex-wrap: wrap;
+              align-items: center;
+            }
+            
+            .search-box, .select-box {
+              padding: 0.75rem;
+              border: 1px solid #ddd;
+              border-radius: 8px;
+              font-size: 14px;
+              background: white;
+            }
+            
+            .search-box {
+              flex: 1;
+              min-width: 200px;
+            }
+            
+            .view-tabs {
+              display: flex;
+              gap: 0.5rem;
+            }
+            
+            .tab-button {
+              padding: 0.5rem 1rem;
+              border: none;
+              background: transparent;
+              cursor: pointer;
+              font-size: 14px;
+              font-weight: 500;
+              color: #6b7280;
+              border-bottom: 2px solid transparent;
+              transition: all 0.2s;
+            }
+            
+            .tab-button.active {
+              color: #0066cc;
+              border-bottom-color: #0066cc;
+            }
+            
+            .form-overlay {
+              position: fixed;
+              top: 0;
+              left: 0;
+              right: 0;
+              bottom: 0;
+              background: rgba(0, 0, 0, 0.5);
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              z-index: 1000;
+            }
+            
+            .form-container {
+              background: white;
+              border-radius: 12px;
+              padding: 2rem;
+              max-width: 600px;
+              width: 90%;
+              max-height: 90vh;
+              overflow-y: auto;
+              box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            }
+            
+            .form-group {
+              margin-bottom: 1.5rem;
+            }
+            
+            .form-label {
+              display: block;
+              font-weight: 500;
+              margin-bottom: 0.5rem;
+              font-size: 14px;
+            }
+            
+            .form-input, textarea, select {
+              width: 100%;
+              padding: 0.75rem;
+              border: 1px solid #ddd;
+              border-radius: 8px;
+              font-size: 14px;
+              font-family: inherit;
+              background: white;
+            }
+            
+            .form-input:focus, textarea:focus, select:focus {
+              outline: none;
+              border-color: #0066cc;
+              box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.1);
+            }
+            
+            .image-upload {
+              border: 2px dashed #ddd;
+              border-radius: 8px;
+              padding: 2rem;
+              text-align: center;
+              cursor: pointer;
+              transition: all 0.2s;
+              background: #f9fafb;
+            }
+            
+            .image-upload:hover {
+              border-color: #0066cc;
+              background: rgba(0, 102, 204, 0.05);
+            }
+            
+            .image-preview {
+              width: 100%;
+              max-width: 200px;
+              margin-top: 1rem;
+              border-radius: 8px;
+            }
+            
+            .gallery-grid {
+              display: grid;
+              grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+              gap: 1.5rem;
+              margin-bottom: 2rem;
+            }
+            
+            .deck-card {
+              background: white;
+              border-radius: 8px;
+              overflow: hidden;
+              border: 1px solid #e5e7eb;
+              transition: all 0.2s;
+              box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            }
+            
+            .deck-card:hover {
+              box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+              border-color: #d1d5db;
+            }
+            
+            .deck-image {
+              width: 100%;
+              height: 200px;
+              object-fit: cover;
+              background: #f3f4f6;
+            }
+            
+            .deck-content {
+              padding: 1rem;
+            }
+            
+            .deck-name {
+              font-weight: 600;
+              font-size: 16px;
+              margin: 0 0 0.25rem 0;
+            }
+            
+            .deck-maker {
+              font-size: 13px;
+              color: #6b7280;
+              margin: 0 0 0.75rem 0;
+            }
+            
+            .deck-meta {
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              font-size: 13px;
+              margin-bottom: 1rem;
+              padding-bottom: 1rem;
+              border-bottom: 1px solid #e5e7eb;
+            }
+            
+            .deck-price {
+              font-weight: 600;
+            }
+            
+            .deck-actions {
+              display: flex;
+              gap: 0.5rem;
+            }
+            
+            .deck-actions button {
+              flex: 1;
+              padding: 0.5rem;
+              border: none;
+              border-radius: 4px;
+              font-size: 12px;
+              cursor: pointer;
+              font-weight: 500;
+            }
+            
+            .edit-btn {
+              background: #0066cc;
+              color: white;
+            }
+            
+            .edit-btn:hover {
+              background: #0052a3;
+            }
+            
+            .delete-btn {
+              background: #f0f0f0;
+              color: #1f2937;
+            }
+            
+            .delete-btn:hover {
+              background: #e5e7eb;
+            }
+            
+            .table-container {
+              overflow-x: auto;
+              margin-bottom: 2rem;
+            }
+            
+            .table {
+              width: 100%;
+              border-collapse: collapse;
+              background: white;
+              border: 1px solid #e5e7eb;
+              border-radius: 8px;
+              overflow: hidden;
+            }
+            
+            .table thead {
+              background: #f9fafb;
+              border-bottom: 1px solid #e5e7eb;
+            }
+            
+            .table th {
+              padding: 1rem;
+              text-align: left;
+              font-weight: 600;
+              font-size: 13px;
+              text-transform: uppercase;
+              letter-spacing: 0.5px;
+            }
+            
+            .table td {
+              padding: 1rem;
+              border-bottom: 1px solid #e5e7eb;
+              font-size: 14px;
+            }
+            
+            .table tbody tr:hover {
+              background: #f9fafb;
+            }
+            
+            .loading, .empty-state {
+              text-align: center;
+              padding: 3rem 1rem;
+              color: #6b7280;
+            }
+            
+            .form-buttons {
+              display: flex;
+              gap: 1rem;
+              margin-top: 2rem;
+            }
+            
+            .form-buttons button {
+              flex: 1;
+            }
+          `}</style>
+
+          <div className="header">
+            <h1>🎴 Card Collection</h1>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <button className="button button-secondary" onClick={exportCSV} disabled={filteredDecks.length === 0}>
+                Export CSV
+              </button>
+              <button className="button button-primary" onClick={() => setShowForm(true)}>
+                + Add Deck
+              </button>
+            </div>
+          </div>
+
+          {!loading && (
+            <div className="stats-bar">
+              <div className="stat-item">
+                <div className="stat-label">Total Decks</div>
+                <div className="stat-value">{filteredDecks.length}</div>
+              </div>
+              <div className="stat-item">
+                <div className="stat-label">Total Copies</div>
+                <div className="stat-value">{totalDecks}</div>
+              </div>
+              <div className="stat-item">
+                <div className="stat-label">Collection Value</div>
+                <div className="stat-value">${totalValue.toFixed(2)}</div>
+              </div>
+            </div>
+          )}
+
+          <div className="controls">
+            <input
+              type="text"
+              className="search-box"
+              placeholder="Search by name or maker..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+            <select
+              className="select-box"
+              value={filterMaker}
+              onChange={(e) => setFilterMaker(e.target.value)}
+            >
+              <option value="">All Makers</option>
+              {makers.map(maker => (
+                <option key={maker} value={maker}>{maker}</option>
+              ))}
+            </select>
+            <div className="view-tabs">
+              <button
+                className={`tab-button ${view === 'gallery' ? 'active' : ''}`}
+                onClick={() => setView('gallery')}
+              >
+                Gallery
+              </button>
+              <button
+                className={`tab-button ${view === 'table' ? 'active' : ''}`}
+                onClick={() => setView('table')}
+              >
+                Table
+              </button>
+            </div>
+          </div>
+
+          {loading ? (
+            <div className="loading">Loading your collection...</div>
+          ) : filteredDecks.length === 0 ? (
+            <div className="empty-state">
+              <p>No decks found. Start by adding your first deck!</p>
+            </div>
+          ) : view === 'gallery' ? (
+            <div className="gallery-grid">
+              {filteredDecks.map(deck => (
+                <div key={deck.id} className="deck-card">
+                  <img 
+                    src={deck.imageUrl || 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200"%3E%3Crect fill="%23f0f0f0" width="200" height="200"/%3E%3Ctext x="50%25" y="50%25" dominant-baseline="middle" text-anchor="middle" fill="%23999" font-size="14"%3ENo image%3C/text%3E%3C/svg%3E'}
+                    alt={deck.name}
+                    className="deck-image"
+                  />
+                  <div className="deck-content">
+                    <p className="deck-name">{deck.name}</p>
+                    <p className="deck-maker">{deck.maker}</p>
+                    <div className="deck-meta">
+                      <span>Qty: {deck.quantity}</span>
+                      <span className="deck-price">${(deck.price * deck.quantity).toFixed(2)}</span>
+                    </div>
+                    {deck.condition && <p style={{ fontSize: '12px', color: '#6b7280', margin: 0 }}>Condition: {deck.condition}</p>}
+                    <div className="deck-actions">
+                      <button className="edit-btn" onClick={() => handleEdit(deck)}>Edit</button>
+                      <button className="delete-btn" onClick={() => handleDelete(deck.id)}>Delete</button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="table-container">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Deck Name</th>
+                    <th>Maker</th>
+                    <th>Qty</th>
+                    <th>Price</th>
+                    <th>Total Value</th>
+                    <th>Condition</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredDecks.map(deck => (
+                    <tr key={deck.id}>
+                      <td>{deck.name}</td>
+                      <td>{deck.maker}</td>
+                      <td>{deck.quantity}</td>
+                      <td>${deck.price}</td>
+                      <td>${(deck.price * deck.quantity).toFixed(2)}</td>
+                      <td>{deck.condition}</td>
+                      <td>
+                        <button className="edit-btn" onClick={() => handleEdit(deck)} style={{ marginRight: '0.5rem', fontSize: '12px', padding: '0.4rem 0.8rem' }}>Edit</button>
+                        <button className="delete-btn" onClick={() => handleDelete(deck.id)} style={{ fontSize: '12px', padding: '0.4rem 0.8rem' }}>Delete</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {showForm && (
+            <div className="form-overlay" onClick={(e) => {
+              if (e.target === e.currentTarget) resetForm();
+            }}>
+              <div className="form-container">
+                <h2 style={{ marginTop: 0 }}>
+                  {editingId ? 'Edit Deck' : 'Add New Deck'}
+                </h2>
+                <form onSubmit={handleSubmit}>
+                  <div className="form-group">
+                    <label className="form-label">Deck Name *</label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      value={formData.name}
+                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                      placeholder="e.g., Classic Red"
+                      required
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Maker *</label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      value={formData.maker}
+                      onChange={(e) => setFormData({ ...formData, maker: e.target.value })}
+                      placeholder="e.g., King Wilds Project"
+                      required
+                    />
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                    <div className="form-group">
+                      <label className="form-label">Quantity</label>
+                      <input
+                        type="number"
+                        className="form-input"
+                        value={formData.quantity}
+                        onChange={(e) => setFormData({ ...formData, quantity: e.target.value })}
+                        min="1"
+                      />
+                    </div>
+
+                    <div className="form-group">
+                      <label className="form-label">Price per Unit ($)</label>
+                      <input
+                        type="number"
+                        className="form-input"
+                        value={formData.price}
+                        onChange={(e) => setFormData({ ...formData, price: e.target.value })}
+                        step="0.01"
+                        placeholder="0.00"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Condition</label>
+                    <select
+                      className="form-input"
+                      value={formData.condition}
+                      onChange={(e) => setFormData({ ...formData, condition: e.target.value })}
+                    >
+                      <option>Mint</option>
+                      <option>Near Mint</option>
+                      <option>Lightly Played</option>
+                      <option>Moderately Played</option>
+                      <option>Heavily Played</option>
+                      <option>Damaged</option>
+                    </select>
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Notes</label>
+                    <textarea
+                      className="form-input"
+                      value={formData.notes}
+                      onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                      placeholder="Any additional info..."
+                      rows="3"
+                      style={{ resize: 'vertical' }}
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Deck Photo</label>
+                    <label className="image-upload">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleImageChange}
+                        style={{ display: 'none' }}
+                      />
+                      <div>📸 Click to upload or drag and drop</div>
+                    </label>
+                    {imagePreview && <img src={imagePreview} alt="Preview" className="image-preview" />}
+                  </div>
+
+                  <div className="form-buttons">
+                    <button type="button" className="button button-secondary" onClick={resetForm}>
+                      Cancel
+                    </button>
+                    <button type="submit" className="button button-primary" disabled={uploading}>
+                      {uploading ? 'Uploading...' : (editingId ? 'Update Deck' : 'Add Deck')}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.render(<CardCollectionApp />, document.getElementById('root'));
+  </script>
+</body>
+</html>
