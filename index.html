@@ -80,13 +80,13 @@
           // Convert data to Firestore format
           const firestoreData = {
             fields: {
-              name: { stringValue: docData.name },
-              maker: { stringValue: docData.maker },
-              quantity: { integerValue: docData.quantity },
-              price: { doubleValue: docData.price },
-              condition: { stringValue: docData.condition },
-              notes: { stringValue: docData.notes },
-              imageUrl: { stringValue: docData.imageUrl },
+              name: { stringValue: docData.name || '' },
+              maker: { stringValue: docData.maker || '' },
+              quantity: { integerValue: String(docData.quantity || 1) },
+              price: { doubleValue: Number(docData.price || 0) },
+              condition: { stringValue: docData.condition || 'Mint' },
+              notes: { stringValue: docData.notes || '' },
+              imageUrl: { stringValue: docData.imageUrl || '' },
               createdAt: { stringValue: docData.createdAt },
               updatedAt: { stringValue: docData.updatedAt }
             }
@@ -125,10 +125,12 @@
               firestoreUpdates.fields[key] = { stringValue: value };
             } else if (typeof value === 'number') {
               if (Number.isInteger(value)) {
-                firestoreUpdates.fields[key] = { integerValue: value };
+                firestoreUpdates.fields[key] = { integerValue: String(value) };
               } else {
                 firestoreUpdates.fields[key] = { doubleValue: value };
               }
+            } else if (typeof value === 'boolean') {
+              firestoreUpdates.fields[key] = { booleanValue: value };
             }
           });
           
@@ -257,11 +259,17 @@
             imageUrl = await uploadImage(imageFile);
           }
 
+          // Ensure price is a valid number
+          let priceValue = parseFloat(formData.price);
+          if (isNaN(priceValue)) {
+            priceValue = 0;
+          }
+
           const deckData = {
             name: formData.name,
             maker: formData.maker,
-            quantity: parseInt(formData.quantity),
-            price: parseFloat(formData.price) || 0,
+            quantity: parseInt(formData.quantity) || 1,
+            price: priceValue,
             condition: formData.condition,
             notes: formData.notes,
             imageUrl: imageUrl,
