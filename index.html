@@ -7,9 +7,9 @@
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <script src="https://www.gstatic.com/firebaselibs/9.23.0/firebase-app.js"></script>
-  <script src="https://www.gstatic.com/firebaselibs/9.23.0/firebase-firestore.js"></script>
-  <script src="https://www.gstatic.com/firebaselibs/9.23.0/firebase-storage.js"></script>
+  <script src="https://unpkg.com/firebase@9.23.0/dist/firebase-app.js"></script>
+  <script src="https://unpkg.com/firebase@9.23.0/dist/firebase-firestore.js"></script>
+  <script src="https://unpkg.com/firebase@9.23.0/dist/firebase-storage.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -36,8 +36,10 @@
       appId: "1:639831061618:web:a3fcded7fffa3bc4b43eeb"
     };
 
-    // Firebase will be initialized when component mounts
-    let db, storage;
+    // Initialize Firebase
+    const app = firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+    const storage = firebase.storage();
 
     function CardCollectionApp() {
       const [decks, setDecks] = useState([]);
@@ -61,8 +63,11 @@
       const [imageFile, setImageFile] = useState(null);
       const [imagePreview, setImagePreview] = useState('');
 
+      useEffect(() => {
+        loadDecks();
+      }, []);
+
       const loadDecks = async () => {
-        if (!db) return;
         try {
           setLoading(true);
           const querySnapshot = await db.collection('decks').get();
@@ -73,39 +78,11 @@
           setDecks(decksData.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
         } catch (error) {
           console.error('Error loading decks:', error);
+          alert('Error loading decks: ' + error.message);
         } finally {
           setLoading(false);
         }
       };
-
-      useEffect(() => {
-        // Initialize Firebase after scripts load
-        const initFirebase = async () => {
-          try {
-            // Wait for Firebase to be available
-            let attempts = 0;
-            while (!window.firebase && attempts < 50) {
-              await new Promise(r => setTimeout(r, 100));
-              attempts++;
-            }
-            
-            if (!window.firebase) {
-              throw new Error('Firebase failed to load');
-            }
-
-            const app = window.firebase.initializeApp(firebaseConfig);
-            db = window.firebase.firestore();
-            storage = window.firebase.storage();
-            
-            loadDecks();
-          } catch (error) {
-            console.error('Firebase init error:', error);
-            setLoading(false);
-          }
-        };
-        
-        initFirebase();
-      }, []);
 
       const handleImageChange = (e) => {
         const file = e.target.files[0];
