@@ -7,9 +7,6 @@
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/firebase@9.23.0/dist/firebase-app.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/firebase@9.23.0/dist/firebase-firestore.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/firebase@9.23.0/dist/firebase-storage.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -29,17 +26,105 @@
     // Firebase config
     const firebaseConfig = {
       apiKey: "AIzaSyDv2vrovWZkPvHovXb-CGdemtTDVckPwnY",
-      authDomain: "magikman32-playing-cards.firebaseapp.com",
       projectId: "magikman32-playing-cards",
-      storageBucket: "magikman32-playing-cards.firebasestorage.app",
-      messagingSenderId: "639831061618",
-      appId: "1:639831061618:web:a3fcded7fffa3bc4b43eeb"
+      storageBucket: "magikman32-playing-cards.firebasestorage.app"
     };
 
-    // Initialize Firebase
-    const app = firebase.initializeApp(firebaseConfig);
-    const db = firebase.firestore();
-    const storage = firebase.storage();
+    // Firebase Realtime Database URL
+    const DB_URL = "https://magikman32-playing-cards-default-rtdb.firebaseio.com";
+
+    // Simple fetch wrapper for Firestore REST API
+    const firestoreAPI = {
+      async getDocs(collection) {
+        try {
+          const response = await fetch(
+            `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents/${collection}`,
+            {
+              headers: {
+                'Authorization': `Bearer ${firebaseConfig.apiKey}`,
+              }
+            }
+          );
+          const data = await response.json();
+          return data.documents || [];
+        } catch (error) {
+          console.error('Error fetching docs:', error);
+          return [];
+        }
+      },
+
+      async addDoc(collection, docData) {
+        try {
+          const docId = Date.now().toString();
+          const response = await fetch(
+            `${DB_URL}/${collection}/${docId}.json?auth=${firebaseConfig.apiKey}`,
+            {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(docData)
+            }
+          );
+          return { id: docId, ...docData };
+        } catch (error) {
+          console.error('Error adding doc:', error);
+          throw error;
+        }
+      },
+
+      async updateDoc(collection, docId, updates) {
+        try {
+          await fetch(
+            `${DB_URL}/${collection}/${docId}.json?auth=${firebaseConfig.apiKey}`,
+            {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(updates)
+            }
+          );
+        } catch (error) {
+          console.error('Error updating doc:', error);
+          throw error;
+        }
+      },
+
+      async deleteDoc(collection, docId) {
+        try {
+          await fetch(
+            `${DB_URL}/${collection}/${docId}.json?auth=${firebaseConfig.apiKey}`,
+            { method: 'DELETE' }
+          );
+        } catch (error) {
+          console.error('Error deleting doc:', error);
+          throw error;
+        }
+      }
+    };
+
+    // Simple storage upload using Firebase Storage REST API
+    const storageAPI = {
+      async uploadFile(bucket, path, file) {
+        try {
+          const formData = new FormData();
+          formData.append('file', file);
+          
+          const response = await fetch(
+            `https://firebasestorage.googleapis.com/v0/b/${bucket}/o?uploadType=media&name=${encodeURIComponent(path)}&key=${firebaseConfig.apiKey}`,
+            {
+              method: 'POST',
+              body: file
+            }
+          );
+          
+          if (!response.ok) throw new Error('Upload failed');
+          
+          // Return download URL
+          return `https://firebasestorage.googleapis.com/v0/b/${bucket}/o/${encodeURIComponent(path)}?alt=media&token=${Date.now()}`;
+        } catch (error) {
+          console.error('Error uploading file:', error);
+          throw error;
+        }
+      }
+    };
 
     function CardCollectionApp() {
       const [decks, setDecks] = useState([]);
@@ -70,11 +155,16 @@
       const loadDecks = async () => {
         try {
           setLoading(true);
-          const querySnapshot = await db.collection('decks').get();
+          const response = await fetch(`${DB_URL}/decks.json`);
+          const data = await response.json();
+          
           const decksData = [];
-          querySnapshot.forEach((doc) => {
-            decksData.push({ id: doc.id, ...doc.data() });
-          });
+          if (data) {
+            Object.keys(data).forEach(key => {
+              decksData.push({ id: key, ...data[key] });
+            });
+          }
+          
           setDecks(decksData.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
         } catch (error) {
           console.error('Error loading decks:', error);
@@ -97,9 +187,7 @@
       const uploadImage = async (file) => {
         const timestamp = Date.now();
         const fileName = `decks/${timestamp}_${file.name}`;
-        const storageRef = storage.ref(fileName);
-        await storageRef.put(file);
-        return storageRef.getDownloadURL();
+        return await storageAPI.uploadFile(firebaseConfig.storageBucket, fileName, file);
       };
 
       const handleSubmit = async (e) => {
@@ -128,11 +216,11 @@
           };
 
           if (editingId) {
-            await db.collection('decks').doc(editingId).update(deckData);
+            await firestoreAPI.updateDoc('decks', editingId, deckData);
             setEditingId(null);
           } else {
             deckData.createdAt = new Date().toISOString();
-            await db.collection('decks').add(deckData);
+            await firestoreAPI.addDoc('decks', deckData);
           }
 
           resetForm();
@@ -179,7 +267,7 @@
       const handleDelete = async (id) => {
         if (window.confirm('Are you sure you want to delete this deck?')) {
           try {
-            await db.collection('decks').doc(id).delete();
+            await firestoreAPI.deleteDoc('decks', id);
             loadDecks();
           } catch (error) {
             console.error('Error deleting deck:', error);
