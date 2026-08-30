@@ -7,6 +7,9 @@
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://www.gstatic.com/firebaselibs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebaselibs/9.23.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebaselibs/9.23.0/firebase-storage-compat.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -23,7 +26,7 @@
   <script type="text/babel">
     const { useState, useEffect } = React;
 
-    // Firebase imports (using CDN)
+    // Firebase config
     const firebaseConfig = {
       apiKey: "AIzaSyDv2vrovWZkPvHovXb-CGdemtTDVckPwnY",
       authDomain: "magikman32-playing-cards.firebaseapp.com",
@@ -33,20 +36,10 @@
       appId: "1:639831061618:web:a3fcded7fffa3bc4b43eeb"
     };
 
-    // Initialize Firebase
-    let db, storage;
-    
-    const initializeFirebase = async () => {
-      const firebaseApp = await import('https://www.gstatic.com/firebaselibs/9.23.0/firebase-app.js');
-      const firestore = await import('https://www.gstatic.com/firebaselibs/9.23.0/firebase-firestore.js');
-      const storageModule = await import('https://www.gstatic.com/firebaselibs/9.23.0/firebase-storage.js');
-      
-      const app = firebaseApp.initializeApp(firebaseConfig);
-      db = firestore.getFirestore(app);
-      storage = storageModule.getStorage(app);
-      
-      return { firebaseApp, firestore, storageModule };
-    };
+    // Initialize Firebase using compat version
+    const app = firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+    const storage = firebase.storage();
 
     function CardCollectionApp() {
       const [decks, setDecks] = useState([]);
@@ -57,7 +50,6 @@
       const [loading, setLoading] = useState(true);
       const [uploading, setUploading] = useState(false);
       const [editingId, setEditingId] = useState(null);
-      const [firebaseReady, setFirebaseReady] = useState(false);
       
       const [formData, setFormData] = useState({
         name: '',
@@ -72,25 +64,13 @@
       const [imagePreview, setImagePreview] = useState('');
 
       useEffect(() => {
-        const setupFirebase = async () => {
-          try {
-            await initializeFirebase();
-            setFirebaseReady(true);
-            loadDecks();
-          } catch (error) {
-            console.error('Firebase init error:', error);
-            setLoading(false);
-          }
-        };
-        setupFirebase();
+        loadDecks();
       }, []);
 
       const loadDecks = async () => {
-        if (!db) return;
         try {
           setLoading(true);
-          const { getDocs, collection } = await import('https://www.gstatic.com/firebaselibs/9.23.0/firebase-firestore.js');
-          const querySnapshot = await getDocs(collection(db, 'decks'));
+          const querySnapshot = await db.collection('decks').get();
           const decksData = [];
           querySnapshot.forEach((doc) => {
             decksData.push({ id: doc.id, ...doc.data() });
@@ -98,6 +78,7 @@
           setDecks(decksData.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
         } catch (error) {
           console.error('Error loading decks:', error);
+          alert('Error loading decks. Check console.');
         } finally {
           setLoading(false);
         }
@@ -114,12 +95,11 @@
       };
 
       const uploadImage = async (file) => {
-        const { ref, uploadBytes, getDownloadURL } = await import('https://www.gstatic.com/firebaselibs/9.23.0/firebase-storage.js');
         const timestamp = Date.now();
         const fileName = `decks/${timestamp}_${file.name}`;
-        const storageRef = ref(storage, fileName);
-        await uploadBytes(storageRef, file);
-        return getDownloadURL(storageRef);
+        const storageRef = storage.ref(fileName);
+        await storageRef.put(file);
+        return storageRef.getDownloadURL();
       };
 
       const handleSubmit = async (e) => {
@@ -131,8 +111,6 @@
 
         setUploading(true);
         try {
-          const { addDoc, collection, updateDoc, doc } = await import('https://www.gstatic.com/firebaselibs/9.23.0/firebase-firestore.js');
-          
           let imageUrl = formData.imageUrl;
           if (imageFile) {
             imageUrl = await uploadImage(imageFile);
@@ -150,11 +128,11 @@
           };
 
           if (editingId) {
-            await updateDoc(doc(db, 'decks', editingId), deckData);
+            await db.collection('decks').doc(editingId).update(deckData);
             setEditingId(null);
           } else {
             deckData.createdAt = new Date().toISOString();
-            await addDoc(collection(db, 'decks'), deckData);
+            await db.collection('decks').add(deckData);
           }
 
           resetForm();
@@ -201,8 +179,7 @@
       const handleDelete = async (id) => {
         if (window.confirm('Are you sure you want to delete this deck?')) {
           try {
-            const { deleteDoc, doc } = await import('https://www.gstatic.com/firebaselibs/9.23.0/firebase-firestore.js');
-            await deleteDoc(doc(db, 'decks', id));
+            await db.collection('decks').doc(id).delete();
             loadDecks();
           } catch (error) {
             console.error('Error deleting deck:', error);
